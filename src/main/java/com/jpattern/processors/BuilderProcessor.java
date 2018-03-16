@@ -2,48 +2,18 @@ package com.jpattern.processors;
 
 import com.google.common.base.CaseFormat;
 import com.google.common.collect.ImmutableSet;
-
-import com.jpattern.annotations.Builder;
-import com.jpattern.annotations.Ignore;
-import com.jpattern.annotations.Immutable;
-import com.jpattern.annotations.Include;
-import com.jpattern.annotations.Replace;
+import com.jpattern.annotations.*;
 import com.jpattern.constants.Pattern;
-
-import com.squareup.javapoet.ClassName;
-import com.squareup.javapoet.FieldSpec;
-import com.squareup.javapoet.JavaFile;
-import com.squareup.javapoet.MethodSpec;
-import com.squareup.javapoet.ParameterSpec;
-import com.squareup.javapoet.TypeName;
-import com.squareup.javapoet.TypeSpec;
-
+import com.squareup.javapoet.*;
 import javafx.util.Pair;
 
-import javax.annotation.processing.AbstractProcessor;
-import javax.annotation.processing.Filer;
-import javax.annotation.processing.Messager;
-import javax.annotation.processing.ProcessingEnvironment;
-import javax.annotation.processing.RoundEnvironment;
-
+import javax.annotation.processing.*;
 import javax.lang.model.SourceVersion;
-import javax.lang.model.element.Element;
-import javax.lang.model.element.ElementKind;
-import javax.lang.model.element.Modifier;
-import javax.lang.model.element.TypeElement;
-import javax.lang.model.element.VariableElement;
+import javax.lang.model.element.*;
 import javax.lang.model.util.ElementFilter;
-
 import javax.tools.Diagnostic;
-
 import java.io.IOException;
-
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.IllegalFormatException;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -109,17 +79,18 @@ public class BuilderProcessor extends AbstractProcessor {
 
             validateAnnotationsParameters(element, annotationsCount);
 
-            final List<VariableElement> fields = getNonIgnoredFields(element, annotationsCount == 1);
+            final boolean canIgnoreAffects = annotationsCount == 1;
 
-            final List<String> immutableFields = getImmutableFieldsNames(element, annotationsCount == 1);
+            final List<VariableElement> fields = getNonIgnoredFields(element, canIgnoreAffects);
 
-            final Map<MethodSpec, String[]> replacements = getReplacementMethodPairs(element, annotationsCount == 1);
+            final List<String> immutableFields = getImmutableFieldsNames(element, canIgnoreAffects);
+
+            final Map<MethodSpec, String[]> replacements = getReplacementMethods(element, canIgnoreAffects);
 
             final List<MethodSpec> replacementMethods = new ArrayList<>();
             final List<String> replacedMethods = new ArrayList<>();
 
             replacements.forEach((method, replacedMethodsNames) -> {
-
                 replacementMethods.add(method);
                 replacedMethods.addAll(Arrays.asList(replacedMethodsNames));
             });
@@ -133,15 +104,15 @@ public class BuilderProcessor extends AbstractProcessor {
                 final TypeName typeName = TypeName.get(field.asType());
                 final String name = field.getSimpleName().toString();
 
+                if (replacedMethods.contains(name) || immutableFields.contains(name))
+                    continue;
+
                 // create the field
                 fieldsList.add(FieldSpec
                         .builder(typeName, name, Modifier.PRIVATE)
                         .initializer(field.getConstantValue().toString())
                         .build()
                 );
-
-                if (replacedMethods.contains(name) || immutableFields.contains(name))
-                    continue;
 
                 // create the setter
                 setters.add(MethodSpec.methodBuilder(name)
@@ -157,7 +128,6 @@ public class BuilderProcessor extends AbstractProcessor {
             final List<List<ParameterSpec>> methodsParamsTypes = new ArrayList<>(fields.size());
 
             setters.forEach(method -> {
-
                 methodsNames.add(method.name);
                 methodsParamsTypes.add(method.parameters);
             });
@@ -182,7 +152,7 @@ public class BuilderProcessor extends AbstractProcessor {
                     .addStatement("return new $T()", builderType)
                     .build();
 
-            final List<MethodSpec> includedMethods = getIncludedMethods(element, annotationsCount == 1);
+            final List<MethodSpec> includedMethods = getIncludedMethods(element, canIgnoreAffects);
 
             includedMethods.forEach(method -> {
 
@@ -319,37 +289,37 @@ public class BuilderProcessor extends AbstractProcessor {
         }
     }
 
-    private List<VariableElement> getNonIgnoredFields(final Element element, final boolean canIgnoreParam) {
+    private List<VariableElement> getNonIgnoredFields(final Element element, final boolean canIgnoreAffects) {
 
         return ElementFilter
                 .fieldsIn(element.getEnclosedElements())
                 .stream()
                 .filter(field -> field.getAnnotation(Ignore.class) == null ||
                         (!Arrays.asList(field.getAnnotation(Ignore.class).affects()).contains(Pattern.BUILDER) &&
-                                !(canIgnoreParam && Arrays.asList(field.getAnnotation(Ignore.class).affects()).isEmpty()))
+                                !(canIgnoreAffects && Arrays.asList(field.getAnnotation(Ignore.class).affects()).isEmpty()))
                 ).collect(Collectors.toList());
     }
 
-    private List<String> getImmutableFieldsNames(final Element element, final boolean canIgnoreParam) {
+    private List<String> getImmutableFieldsNames(final Element element, final boolean canIgnoreAffects) {
 
         return ElementFilter
                 .fieldsIn(element.getEnclosedElements())
                 .stream()
                 .filter(field -> field.getAnnotation(Immutable.class) != null &&
                         (Arrays.asList(field.getAnnotation(Immutable.class).affects()).contains(Pattern.BUILDER) ||
-                                (canIgnoreParam && Arrays.asList(field.getAnnotation(Immutable.class).affects()).isEmpty()))
+                                (canIgnoreAffects && Arrays.asList(field.getAnnotation(Immutable.class).affects()).isEmpty()))
                 ).map(field -> field.getSimpleName().toString())
                 .collect(Collectors.toList());
     }
 
-    private List<MethodSpec> getIncludedMethods(final Element element, final boolean canIgnoreParam) {
+    private List<MethodSpec> getIncludedMethods(final Element element, final boolean canIgnoreAffects) {
 
         return ElementFilter
                 .methodsIn(element.getEnclosedElements())
                 .stream()
                 .filter(method -> method.getAnnotation(Include.class) != null &&
                         (Arrays.asList(method.getAnnotation(Include.class).affects()).contains(Pattern.BUILDER) ||
-                                (canIgnoreParam && Arrays.asList(method.getAnnotation(Include.class).affects()).isEmpty()))
+                                (canIgnoreAffects && Arrays.asList(method.getAnnotation(Include.class).affects()).isEmpty()))
                 ).map(method -> MethodSpec
                         .methodBuilder(method.getSimpleName().toString())
                         .addModifiers(method.getModifiers())
@@ -364,14 +334,14 @@ public class BuilderProcessor extends AbstractProcessor {
                 ).collect(Collectors.toList());
     }
 
-    private Map<MethodSpec, String[]> getReplacementMethodPairs(final Element element, final boolean canIgnoreParam) {
+    private Map<MethodSpec, String[]> getReplacementMethods(final Element element, final boolean canIgnoreAffects) {
 
         return ElementFilter
                 .methodsIn(element.getEnclosedElements())
                 .stream()
                 .filter(method -> method.getAnnotation(Replace.class) != null &&
                         (Arrays.asList(method.getAnnotation(Replace.class).affects()).contains(Pattern.BUILDER) ||
-                                (canIgnoreParam && Arrays.asList(method.getAnnotation(Replace.class).affects()).isEmpty()))
+                                (canIgnoreAffects && Arrays.asList(method.getAnnotation(Replace.class).affects()).isEmpty()))
                 ).map(method -> new Pair<>(MethodSpec
                         .methodBuilder(method.getSimpleName().toString())
                         .addModifiers(method.getModifiers())
