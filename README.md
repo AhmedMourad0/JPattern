@@ -11,12 +11,14 @@ class Item {
 
   private [final] String name;
   private [final] String providerName;
+  private [final] String region;
   private [final] int amount;
   private [final] boolean isStocked;
  
-  Item(String name, String providerName, int amount, boolean isStocked) {
+  Item(String name, String providerName, String region, int amount, boolean isStocked) {
     this.name = name;
     this.providerName = providerName;
+    this.region = region;
     this.amount = amount;
     this.isStocked = isStocked;
   }
@@ -32,6 +34,10 @@ class Item {
     return this.providerName;
   }
  
+  String getRegion() {
+    return this.region;
+  }
+  
   @Aliased("available")
   int getAmount() {
     return this.amount;
@@ -73,6 +79,7 @@ Item i = new ItemBuilder()
   .isStocked(false)
   .transition(deposited, withdrawn)
   //.available(deposited - withdrawn)
+  .region("Egypt")
   .build(); // output: hi
 ```
 
